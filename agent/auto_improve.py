@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 
 # Hermes specific imports (assuming these are available in the agent's environment)
 # The agent will implicitly have access to these when run within Hermes
-from hermes_tools import web_search, read_file, write_file, patch, skill_manage
+from ..hermes_tools import web_search, read_file, write_file, patch, skill_manage
 from hermes_cli.config import cfg_get, cfg_set
 from agent.rate_limit_wrapper import get_rate_limit_interceptor, CooldownInfo
 from agent.model_rater import get_model_rater, ModelRating # Assuming model_rater is also in agent/
