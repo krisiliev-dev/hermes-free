@@ -19,16 +19,17 @@ import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-# Add parent directory to path for imports to work regardless of execution context
-# This makes hermes_tools.py importable when running directly vs. as part of a package
+# Add repository root to FRONT of path for imports to work regardless of execution context
+# This ensures OUR hermes_tools.py is used instead of any system-installed version
 current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+repo_root = os.path.dirname(current_dir)  # hermes-agent directory
+if repo_root in sys.path:
+    sys.path.remove(repo_root)  # Remove any existing entry
+sys.path.insert(0, repo_root)  # Insert at front to override others
 
 # Hermes specific imports (assuming these are available in the agent's environment)
 # The agent will implicitly have access to these when run within Hermes
-from ..hermes_tools import web_search, read_file, write_file, patch, skill_manage
+from hermes_tools import web_search, read_file, write_file, patch, skill_manage
 from hermes_cli.config import cfg_get, cfg_set
 from agent.rate_limit_wrapper import get_rate_limit_interceptor, CooldownInfo
 from agent.model_rater import get_model_rater, ModelRating # Assuming model_rater is also in agent/
