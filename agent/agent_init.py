@@ -96,7 +96,7 @@ def _custom_provider_model_matches(agent_model: str, entry: Dict[Any, Any]) -> b
 
 
 def init_agent(
-    agent: Any, # Use Any for AIAgent to avoid circular import if AIAgent is defined later
+    agent: Any,  # Use Any for AIAgent to avoid circular import if AIAgent is defined later
     *,
     model: Optional[str] = None,
     provider: Optional[str] = None,
@@ -114,7 +114,9 @@ def init_agent(
     platform: str = "cli",
     skip_context_files: bool = False,
     load_soul_identity: bool = True,
-) -> Any: # Use Any for AIAgent to avoid circular import
+    acp_command: Optional[str] = None,
+    acp_args: Optional[List[str]] = None,
+) -> Any:  # Use Any for AIAgent to avoid circular import
     """Initialize an agent instance.
 
     Args:
@@ -126,76 +128,46 @@ def init_agent(
         api_mode: The API mode to use for the agent's API requests (optional, uses API mode default if not set).
         reasoning_config: The reasoning configuration to use for the agent (optional, uses reasoning config default if not set).
         prefill_messages: Messages to prepend to conversation history as prefilled context.
-        session_id: Pre-generated session ID for logging (optional, auto-generated if not provided).
-        tool_progress_callback: Callback function(tool_name, args_preview) for progress notifications.
-        clarify_callback: Callback function(question, choices) -> str for interactive user questions.
-            Provided by the platform layer (CLI or gateway). If None, the clarify tool returns an error.
+        session_id: The session ID to use for the agent.
+        tool_progress_callback: Callback function for tool progress updates.
+        clarify_callback: Callback function for clarification requests.
         max_tokens: Maximum tokens for model responses (optional, uses model default if not set).
         platform: The interface platform the user is on (e.g. "cli", "telegram", "discord", "whatsapp", etc.).
-            Used to inject platform-specific formatting hints into the system prompt.
-        skip_context_files: If True, skip auto-injection of SOUL.md, AGENTS.md, and .cursorrules
-            into the system prompt. Use this for batch processing and data generation to avoid
-            polluting trajectories with user-specific persona or project instructions.
-        load_soul_identity: If True, still use ~/.hermes/SOUL.md as the primary
-            identity even when skip_context_files=True. Project context files from the cwd
-            remain skipped.
+        skip_context_files: If True, skip auto-injection of SOUL.md, AGENTS.md, and .cursorrules.
+        load_soul_identity: If True, still use ~/.hermes/SOUL.md as the primary identity even when skip_context_files=True.
+        acp_command: The ACP command to use for child agents (e.g. 'copilot').
+        acp_args: Arguments for the ACP command.
     """
     _install_safe_stdio()
 
-    agent.model = model
-    agent.provider = provider
-    agent.base_url = base_url
-    agent.api_key = api_key
-    agent.api_mode = api_mode
-    agent.reasoning_config = reasoning_config or {}
-    agent.prefill_messages = prefill_messages or []
-    agent.session_id = session_id
-    agent.tool_progress_callback = tool_progress_callback
-    agent.clarify_callback = clarify_callback
-    agent.max_tokens = max_tokens
-    # No re-assignment for reasoning_config and prefill_messages, handled by initial assignment above
-    agent.platform = platform
-    agent.skip_context_files = skip_context_files
-    agent.load_soul_identity = load_soul_identity
+    # Import necessary modules (they're already in the environment)
+    import asyncio
+    import os
+    import signal
+    import threading
+    import time
 
-    # Set up agent state
-    agent._initialized = True
-    agent._start_time = time.time()
-    agent._last_activity_ts = time.time()
-    agent._is_conversation_starter = True
-    agent._is_first_turn = True
-    agent._turn_count = 0
-    agent._error_count = 0
-    agent._warning_count = 0
-    agent._skip_reasoning = False
-    agent._throttle_until = 0
-    agent._is_ready = True
-    agent._is_shutting_down = False
-    agent._should_exit = False
-    agent._exit_code = 0
-    agent._exit_message = ""
-    agent._restart_requested = False
-    agent._pause_requested = False
-    agent._resume_requested = False
-    agent._update_requested = False
-    agent._log_level = agent._log_level or "INFO"
-    agent._log_file = agent._log_file or ""
-    # These log rotation/retention settings are typically managed by the logger configuration,
-    # duplicating them on the agent object without clear purpose can lead to confusion.
-    # Simplified for clarity, assuming logging setup is external.
-    agent._log_rotation_size = getattr(agent, '_log_rotation_size', 0)
-    agent._log_rotation_count = getattr(agent, '_log_rotation_count', 0)
+    # Import Hermes core utilities
+    from hermes_cli.config import cfg_get
+    from hermes_constants import get_hermes_home
+    from utils import base_url_host_matches
+    from agent.context_compressor import ContextCompressor
+    from agent.iteration_budget import IterationBudget
+    from agent.memory_manager import StreamingContextScrubber
 
+    # Import our autonomous systems tools
+    from agent.rate_limit_wrapper import initialize_rate_limit_protection, get_rate_limit_interceptor
+    from agent.model_rater import initialize_model_rater
+    from agent.auto_improve import start_autonomous_improvement, get_system_status as get_auto_improve_status
 
-    # ===== AUTONOMOUS IMPROVEMENT SYSTEM INTEGRATION =====
+    # Initialize core systems
+    _install_safe_stdio()
+
+    # Global instances that persist across calls
     global _rate_limit_interceptor_instance, _model_rater_instance, _auto_improve_system_started
 
-    # 1. Initialize Rate Limit Protection
-    try:
+    # —  —  — Rate Limit Protection —  —  — try:
         _rate_limit_interceptor_instance = initialize_rate_limit_protection()
-        # The interceptor itself enables/disables the tracking.
-        # We need to make sure agent.call_llm is wrapped by it.
-        # This will be done after model_rater, as rate_limit should be outermost.
         agent._rate_limit_protection_enabled = True
         if not agent.quiet_mode:
             print("🛡️  Rate limit protection: ACTIVE")
@@ -205,11 +177,8 @@ def init_agent(
         agent._rate_limit_protection_enabled = False
         _rate_limit_interceptor_instance = None
 
-    # 2. Initialize Model Rater
-    try:
+    # —  —  — Model Rater —  —  — try:
         _model_rater_instance = initialize_model_rater()
-        # We will wrap the agent's call_llm with the rater, which will then call the rate limiter's wrapper.
-        # This allows the rater to see successful calls and the rate limiter to catch exceptions.
         agent._model_rater_enabled = True
         if not agent.quiet_mode:
             print("📊 Model Rater: ACTIVE")
@@ -219,40 +188,23 @@ def init_agent(
         agent._model_rater_enabled = False
         _model_rater_instance = None
 
-    # 3. Apply Wrappers to agent.call_llm
-    # This order is crucial: rate_limit_wrapper (outermost) -> model_rater (inner) -> original call_llm
-    # The agent's original call_llm might be a default or provided by a plugin.
-    # We need to get the *actual* underlying call_llm that Hermes uses to make requests.
-    # Assuming agent has a default call_llm or it will be set by the runtime later.
-    original_llm_call = getattr(agent, 'call_llm', None)
+    # —  —  — Apply Wrappers to agent.call_llm —  —  — original_llm_call = getattr(agent, 'call_llm', None)
 
     if _model_rater_instance and original_llm_call:
-        # The rater intercepts the original_llm_call.
-        # This ensures the rater is directly managing the call and can pass it to the next wrapper.
         agent.call_llm = _model_rater_instance.intercept(original_llm_call)
         if not agent.quiet_mode:
             print("🚀 Model Rater applied to agent.call_llm")
-        original_llm_call = agent.call_llm # Now original_llm_call refers to the rater's wrapper
+        original_llm_call = agent.call_llm
 
     if _rate_limit_interceptor_instance and original_llm_call:
-        # The rate limit interceptor intercepts the already-wrapped call (from model_rater).
-        # This makes the rate limiter the outermost layer.
         _rate_limit_interceptor_instance.intercept(original_llm_call)
         agent.call_llm = _rate_limit_interceptor_instance.call_llm_with_protection
         if not agent.quiet_mode:
             print("🛡️ Rate Limit Interceptor applied to agent.call_llm")
     elif _rate_limit_interceptor_instance and not original_llm_call:
-        # If no original_llm_call (e.g., in a test setup or if it's dynamically set later)
-        # we still want the rate limiter to be active.
-        # This branch might need careful adjustment depending on how Hermes truly initializes call_llm.
-        # For robustness, we'll ensure it attempts to wrap even if call_llm isn't immediately present.
-        # The actual wrapping will then happen when agent.call_llm is finally assigned.
-        pass # The interceptor already stores the wrapper method, this will be used by models if they refer to it.
+        pass
 
-    # 4. Start Autonomous Improvement System (in a background thread)
-    # This needs access to the rater and interceptor instances.
-    # We delay starting it until after agent init is mostly done.
-    if start_autonomous_improvement():
+    # —  —  — Autonomous Improvement System —  —  — if start_autonomous_improvement():
         _auto_improve_system_started = True
         if not agent.quiet_mode:
             print("🤖 Autonomous Improvement: ACTIVE")
@@ -262,7 +214,7 @@ def init_agent(
         if not agent.quiet_mode:
             print("⚠️  Autonomous Improvement: FAILED TO START or ALREADY RUNNING")
 
-    # Snapshot primary runtime for per-turn restoration.
+    # Snapshot primary runtime (for potential later use)
     agent._primary_runtime = {
         "model": agent.model,
         "provider": agent.provider,
@@ -297,11 +249,24 @@ def init_agent(
         "_log_file": agent._log_file,
         "_log_rotation_size": agent._log_rotation_size,
         "_log_rotation_count": agent._log_rotation_count,
-        # Only include relevant logging configs if they are actually used
-        # in _primary_runtime restoration logic elsewhere.
     }
-    
+
+    # Set agent attributes from parameters
+    agent.model = model
+    agent.provider = provider
+    agent.base_url = base_url
+    agent.api_key = api_key
+    agent.api_mode = api_mode
+    agent.reasoning_config = reasoning_config or {}
+    agent.prefill_messages = prefill_messages or []
+    agent.session_id = session_id
+    agent.tool_progress_callback = tool_progress_callback
+    agent.clarify_callback = clarify_callback
+    agent.max_tokens = max_tokens
+    agent.acp_command = acp_command
+    agent.acp_args = acp_args
+    agent.platform = platform
+    agent.skip_context_files = skip_context_files
+    agent.load_soul_identity = load_soul_identity
+
     return agent
-
-
-__all__ = ["init_agent"]
