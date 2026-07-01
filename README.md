@@ -2,214 +2,197 @@
   <img src="assets/banner.png" alt="Hermes Agent" width="100%">
 </p>
 
-# Hermes Agent ☤
+# Hermes Agent ☤ (Autonomous & Self-Improving)
 
 <p align="center">
-  <a href="https://hermes-agent.nousresearch.com/docs/"><img src="https://img.shields.io/badge/Docs-hermes--agent.nousresearch.com-FFD700?style=for-the-badge" alt="Documentation"></a>
-  <a href="https://discord.gg/NousResearch"><img src="https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>
-  <a href="https://github.com/NousResearch/hermes-agent/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
-  <a href="https://nousresearch.com"><img src="https://img.shields.io/badge/Built%20by-Nous%20Research-blueviolet?style=for-the-badge" alt="Built by Nous Research"></a>
-  <a href="README.zh-CN.md"><img src="https://img.shields.io/badge/Lang-中文-red?style=for-the-badge" alt="中文"></a>
+  <a href="https://github.com/krisiliev-dev/hermes-free/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
+  <a href="https://github.com/krisiliev-dev/hermes-free"><img src="https://img.shields.io/badge/Repository-hermes--free-blue?style=for-the-badge" alt="Repository"></a>
 </p>
 
-**The self-improving AI agent built by [Nous Research](https://nousresearch.com).** It's the only agent with a built-in learning loop — it creates skills from experience, improves them during use, nudges itself to persist knowledge, searches its own past conversations, and builds a deepening model of who you are across sessions. Run it on a $5 VPS, a GPU cluster, or serverless infrastructure that costs nearly nothing when idle. It's not tied to your laptop — talk to it from Telegram while it works on a cloud VM.
-
-Use any model you want — [Nous Portal](https://portal.nousresearch.com), [OpenRouter](https://openrouter.ai) (200+ models), [NovitaAI](https://novita.ai) (AI-native cloud for Model API, Agent Sandbox, and GPU Cloud), [NVIDIA NIM](https://build.nvidia.com) (Nemotron), [Xiaomi MiMo](https://platform.xiaomimimo.com), [z.ai/GLM](https://z.ai), [Kimi/Moonshot](https://platform.moonshot.ai), [MiniMax](https://www.minimax.io), [Hugging Face](https://huggingface.co), OpenAI, or your own endpoint. Switch with `hermes model` — no code changes, no lock-in.
-
-<table>
-<tr><td><b>A real terminal interface</b></td><td>Full TUI with multiline editing, slash-command autocomplete, conversation history, interrupt-and-redirect, and streaming tool output.</td></tr>
-<tr><td><b>Lives where you do</b></td><td>Telegram, Discord, Slack, WhatsApp, Signal, and CLI — all from a single gateway process. Voice memo transcription, cross-platform conversation continuity.</td></tr>
-<tr><td><b>A closed learning loop</b></td><td>Agent-curated memory with periodic nudges. Autonomous skill creation after complex tasks. Skills self-improve during use. FTS5 session search with LLM summarization for cross-session recall. <a href="https://github.com/plastic-labs/honcho">Honcho</a> dialectic user modeling. Compatible with the <a href="https://agentskills.io">agentskills.io</a> open standard.</td></tr>
-<tr><td><b>Scheduled automations</b></td><td>Built-in cron scheduler with delivery to any platform. Daily reports, nightly backups, weekly audits — all in natural language, running unattended.</td></tr>
-<tr><td><b>Delegates and parallelizes</b></td><td>Spawn isolated subagents for parallel workstreams. Write Python scripts that call tools via RPC, collapsing multi-step pipelines into zero-context-cost turns.</td></tr>
-<tr><td><b>Runs anywhere, not just your laptop</b></td><td>Six terminal backends — local, Docker, SSH, Singularity, Modal, and Daytona. Daytona and Modal offer serverless persistence — your agent's environment hibernates when idle and wakes on demand, costing nearly nothing between sessions. Run it on a $5 VPS or a GPU cluster.</td></tr>
-<tr><td><b>Research-ready</b></td><td>Batch trajectory generation, trajectory compression for training the next generation of tool-calling models.</td></tr>
-</table>
+**This is a customized, self-improving version of the Hermes AI Agent, designed for maximum autonomy and reliability.** It features integrated rate limit handling, dynamic model rating, and a continuous self-improvement loop to optimize performance and discover new free models.
 
 ---
 
-## Quick Install
+## ✨ Key Autonomous Features
 
-### Linux, macOS, WSL2, Termux
+This repository includes the following integrated systems that work seamlessly to make Hermes more robust:
+
+1.  **🛡️ Core Rate Limit Protection**: Automatically intercepts all LLM (Large Language Model) calls, detects HTTP 429 (Too Many Requests) responses, extracts `Retry-After` cooldowns, and manages a thread-safe cooldown tracker. Models on cooldown are gracefully skipped, ensuring uninterrupted operation.
+    *   **File**: `agent/rate_limit_wrapper.py`
+    *   **Integration**: Integrated directly into `agent_init.py` for automatic startup.
+
+2.  **📊 Dynamic Model Rater**: Intercepts model responses to evaluate and score them based on various metrics:
+    *   **Quickness**: Latency of responses.
+    *   **Success Rate**: How often a model provides a valid, usable response.
+    *   **Qualitative Score**: (Future/Optional - requires a critic LLM) Subjective assessment of helpfulness, logic, and relevance.
+    *   **File**: `agent/model_rater.py`
+    *   **Integration**: Integrated directly into `agent_init.py`, wrapping the LLM calls to capture performance data.
+
+3.  **🤖 Autonomous Improvement System**: A background daemon thread that continuously monitors Hermes's performance and system state:
+    *   **Fallback Chain Optimization**: Periodically analyzes model ratings from `model_rater.py` to intelligently reorder the `fallback_providers` in `config.yaml`, promoting best-performing and available models.
+    *   **New Model Discovery**: Periodically performs web searches (e.g., on OpenRouter.ai) to find new free models and integrates promising candidates into the `fallback_providers` list for evaluation.
+    *   **File**: `agent/auto_improve.py`
+    *   **Integration**: Integrated directly into `agent_init.py` for automatic startup as a background thread.
+
+4.  **🔔 External Rate Limit Monitor (macOS/Windows)**: A standalone script that runs concurrently to monitor Hermes logs for rate limit events, updates a shared cooldown state, and provides desktop notifications.
+    *   **File**: `Desktop/rate_limit_monitor_external.py` (located on your desktop, not in the repo's `agent/` folder by default)
+    *   **Integration**: Configured via macOS LaunchAgent or Windows Task Scheduler for automatic startup.
+
+---
+
+## 🚀 Setup & Installation
+
+To replicate this autonomous Hermes Agent on a new machine (macOS or Windows), follow these steps:
+
+### Prerequisites
+
+*   **Hermes Agent Installation**: Ensure you have a standard Hermes Agent installation on your target machine. Follow the official Hermes Agent Quick Install guide if you haven't already:
+    *   **Linux, macOS, WSL2, Termux**: 
+        ```bash
+        curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
+        ```
+    *   **Windows (native, PowerShell)**:
+        ```powershell
+        iex (irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1)
+        ```
+*   **Git**: Ensure Git is installed and configured.
+*   **Python 3.11+**: Hermes requires Python 3.11 or newer.
+
+### Step 1: Clone Your Customized Repository
+
+First, clone this `hermes-free` repository to your new machine.
+Navigate to where you want to clone it (e.g., your home directory `~/` or `C:\Users\<YourUser>\`):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
+git clone https://github.com/krisiliev-dev/hermes-free.git
+cd hermes-free
 ```
 
-### Windows (native, PowerShell) — Early Beta
+### Step 2: Copy Modified and New Files
 
-> **Heads up:** Native Windows support is **early beta**. It installs and runs, but hasn't been road-tested as broadly as our Linux/macOS/WSL2 paths. Please [file issues](https://github.com/NousResearch/hermes-agent/issues) when you hit rough edges. For the most battle-tested Windows setup today, run the Linux/macOS one-liner above inside **WSL2**.
+You need to copy the modified core file and the new autonomous system modules into your Hermes Agent installation directory.
 
-Run this in PowerShell:
+**Determine your Hermes Agent Installation Path:**
+*   **macOS/Linux/WSL2**: `~/.hermes/hermes-agent/`
+*   **Windows (native)**: `%LOCALAPPDATA%\hermes\hermes-agent\` (e.g., `C:\Users\<YourUser>\AppData\Local\hermes\hermes-agent\`)
 
-```powershell
-iex (irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1)
-```
-
-The installer handles everything: uv, Python 3.11, Node.js, ripgrep, ffmpeg, **and a portable Git Bash** (MinGit, unpacked to `%LOCALAPPDATA%\hermes\git` — no admin required, completely isolated from any system Git install).  Hermes uses this bundled Git Bash to run shell commands.
-
-If you already have Git installed, the installer detects it and uses that instead.  Otherwise a ~45MB MinGit download is all you need — it won't touch or interfere with any system Git.
-
-> **Android / Termux:** The tested manual path is documented in the [Termux guide](https://hermes-agent.nousresearch.com/docs/getting-started/termux). On Termux, Hermes installs a curated `.[termux]` extra because the full `.[all]` extra currently pulls Android-incompatible voice dependencies.
->
-> **Windows:** Native Windows is supported as an **early beta** — the PowerShell one-liner above installs everything, but expect rough edges and please file issues when you hit them. If you'd rather use WSL2 (our most battle-tested Windows path), the Linux command works there too. Native Windows install lives under `%LOCALAPPDATA%\hermes`; WSL2 installs under `~/.hermes` as on Linux.  The only Hermes feature that currently needs WSL2 specifically is the browser-based dashboard chat pane (it uses a POSIX PTY — classic CLI and gateway both run natively).
-
-After installation:
+**Copy Commands (adjust paths for your OS):**
 
 ```bash
-source ~/.bashrc    # reload shell (or: source ~/.zshrc)
-hermes              # start chatting!
+# Assuming you are in the cloned 'hermes-free' directory
+# and TARGET_HERMES_DIR is your Hermes Agent installation path
+
+# Example for macOS/Linux:
+TARGET_HERMES_DIR=~/.hermes/hermes-agent/
+
+# Example for Windows PowerShell (run as administrator for AppData, or adjust for user-only path):
+# $TARGET_HERMES_DIR="$env:LOCALAPPDATA\hermes\hermes-agent\"
+
+# Copy modified agent_init.py
+cp agent/agent_init.py "$TARGET_HERMES_DIR/agent/agent_init.py"
+
+# Copy new autonomous system modules
+cp agent/rate_limit_wrapper.py "$TARGET_HERMES_DIR/agent/rate_limit_wrapper.py"
+cp agent/model_rater.py "$TARGET_HERMES_DIR/agent/model_rater.py"
+cp agent/auto_improve.py "$TARGET_HERMES_DIR/agent/auto_improve.py"
 ```
 
----
+### Step 3: Configure External Rate Limit Monitor for Auto-Start
 
-## Getting Started
+The `rate_limit_monitor_external.py` script provides concurrent monitoring and desktop notifications. It needs to be started automatically.
 
-```bash
-hermes              # Interactive CLI — start a conversation
-hermes model        # Choose your LLM provider and model
-hermes tools        # Configure which tools are enabled
-hermes config set   # Set individual config values
-hermes gateway      # Start the messaging gateway (Telegram, Discord, etc.)
-hermes setup        # Run the full setup wizard (configures everything at once)
-hermes claw migrate # Migrate from OpenClaw (if coming from OpenClaw)
-hermes update       # Update to the latest version
-hermes doctor       # Diagnose any issues
-```
+#### 🍎 macOS Setup (LaunchAgent)
 
-📖 **[Full documentation →](https://hermes-agent.nousresearch.com/docs/)**
+1.  **Copy the external monitor script** to your Desktop (or any persistent location):
+    ```bash
+    cp agent/rate_limit_monitor_external.py ~/Desktop/rate_limit_monitor_external.py
+    chmod +x ~/Desktop/rate_limit_monitor_external.py
+    ```
+    *(Note: The script in this repo is a placeholder for the one I previously generated and saved to your Desktop. Ensure you use the one that was on your Desktop previously.)*
 
----
+2.  **Ensure the `com.hermes.ratelimitmonitor.plist` is in place** (it was created and loaded in a previous step on your Mac). If setting up on a *new* macOS machine, you'd create it:
+    ```xml
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+        <key>Label</key>
+        <string>com.hermes.ratelimitmonitor</string>
+        <key>ProgramArguments</key>
+        <array>
+            <string>/usr/bin/python3</string>
+            <string>/Users/kristiyaniliev/Desktop/rate_limit_monitor_external.py</string>
+            <string>--daemon</string>
+            <string>--notify</string>
+        </array>
+        <key>RunAtLoad</key>
+        <true/>
+        <key>KeepAlive</key>
+        <true/>
+        <key>StandardOutPath</key>
+        <string>/Users/kristiyaniliev/.hermes/logs/rate_limit_monitor.log</string>
+        <key>StandardErrorPath</key>
+        <string>/Users/kristiyaniliev/.hermes/logs/rate_limit_monitor.log</string>
+        <key>ServiceDescription</key>
+        <string>Hermes Agent External Rate Limit Monitor</string>
+    </dict>
+    </plist>
+    ```
+    Save this content to `~/Library/LaunchAgents/com.hermes.ratelimitmonitor.plist`.
 
-## Skip the API-key collection — Nous Portal
+3.  **Load the LaunchAgent**:
+    ```bash
+    launchctl load -w ~/Library/LaunchAgents/com.hermes.ratelimitmonitor.plist
+    ```
+    This command registers the service. It will start automatically after the next login/restart.
 
-Hermes works with whatever provider you want — that's not changing. But if you'd rather not collect five separate API keys for the model, web search, image generation, TTS, and a cloud browser, **[Nous Portal](https://portal.nousresearch.com)** covers all of them under one subscription:
+#### 🪟 Windows Setup (Task Scheduler)
 
-- **300+ models** — pick any of them with `/model <name>`
-- **Tool Gateway** — web search (Firecrawl), image generation (FAL), text-to-speech (OpenAI), cloud browser (Browser Use), all routed through your sub. No extra accounts.
+1.  **Copy the external monitor script** to a persistent location, e.g., `C:\Users\<YourUser>\hermes_scripts\rate_limit_monitor_external.py`.
+    *(Note: The script in this repo is a placeholder for the one I previously generated and saved to your Desktop. Ensure you use the one that was on your Desktop previously.)*
 
-One command from a fresh install:
+2.  **Open Task Scheduler**: Search for "Task Scheduler" in the Windows Start menu.
 
-```bash
-hermes setup --portal
-```
+3.  **Create a New Task**:
+    *   In the "Actions" pane, click "Create Task...".
+    *   **General Tab**:
+        *   **Name**: `Hermes Rate Limit Monitor`
+        *   **Description**: `Starts the Hermes Agent external rate limit monitor at user logon.`
+        *   Select "Run whether user is logged on or not" (for background operation)
+        *   Check "Run with highest privileges"
+        *   Configure for: "Windows 10" (or your specific Windows version)
+    *   **Triggers Tab**:
+        *   Click "New...".
+        *   **Begin the task**: "At log on"
+        *   "Delay task for": `30 seconds` (optional, gives system time to boot)
+        *   Ensure "Enabled" is checked.
+    *   **Actions Tab**:
+        *   Click "New...".
+        *   **Action**: "Start a program"
+        *   **Program/script**: `C:\Python311\python.exe` (or wherever your Python 3.11+ executable is located)
+        *   **Add arguments (optional)**: `C:\Users\<YourUser>\hermes_scripts\rate_limit_monitor_external.py --daemon --notify` (adjust path to script)
+        *   **Start in (optional)**: `C:\Users\<YourUser>\hermes_scripts\` (path to script directory)
+    *   **Conditions Tab**: (Optional, adjust as needed)
+        *   Uncheck "Start the task only if the computer is on AC power" if you want it to run on battery.
+    *   **Settings Tab**: (Optional, adjust as needed)
+        *   "Allow task to be run on demand"
+        *   "Stop the task if it runs longer than": (e.g., 1 day, or leave unchecked if it's a persistent daemon)
+        *   "If the running task does not end when requested, force it to stop"
 
-That logs you in via OAuth, sets Nous as your provider, and turns on the Tool Gateway. Check what's wired up any time with `hermes portal status`. Full details on the [Tool Gateway docs page](https://hermes-agent.nousresearch.com/docs/user-guide/features/tool-gateway).
-
-You can still bring your own keys per-tool whenever you want — the gateway is per-backend, not all-or-nothing.
-
----
-
-## CLI vs Messaging Quick Reference
-
-Hermes has two entry points: start the terminal UI with `hermes`, or run the gateway and talk to it from Telegram, Discord, Slack, WhatsApp, Signal, or Email. Once you're in a conversation, many slash commands are shared across both interfaces.
-
-| Action | CLI | Messaging platforms |
-|---------|-----|---------------------|
-| Start chatting | `hermes` | Run `hermes gateway setup` + `hermes gateway start`, then send the bot a message |
-| Start fresh conversation | `/new` or `/reset` | `/new` or `/reset` |
-| Change model | `/model [provider:model]` | `/model [provider:model]` |
-| Set a personality | `/personality [name]` | `/personality [name]` |
-| Retry or undo the last turn | `/retry`, `/undo` | `/retry`, `/undo` |
-| Compress context / check usage | `/compress`, `/usage`, `/insights [--days N]` | `/compress`, `/usage`, `/insights [days]` |
-| Browse skills | `/skills` or `/<skill-name>` | `/<skill-name>` |
-| Interrupt current work | `Ctrl+C` or send a new message | `/stop` or send a new message |
-| Platform-specific status | `/platforms` | `/status`, `/sethome` |
-
-For the full command lists, see the [CLI guide](https://hermes-agent.nousresearch.com/docs/user-guide/cli) and the [Messaging Gateway guide](https://hermes-agent.nousresearch.com/docs/user-guide/messaging).
-
----
-
-## Documentation
-
-All documentation lives at **[hermes-agent.nousresearch.com/docs](https://hermes-agent.nousresearch.com/docs/)**:
-
-| Section | What's Covered |
-|---------|---------------|
-| [Quickstart](https://hermes-agent.nousresearch.com/docs/getting-started/quickstart) | Install → setup → first conversation in 2 minutes |
-| [CLI Usage](https://hermes-agent.nousresearch.com/docs/user-guide/cli) | Commands, keybindings, personalities, sessions |
-| [Configuration](https://hermes-agent.nousresearch.com/docs/user-guide/configuration) | Config file, providers, models, all options |
-| [Messaging Gateway](https://hermes-agent.nousresearch.com/docs/user-guide/messaging) | Telegram, Discord, Slack, WhatsApp, Signal, Home Assistant |
-| [Security](https://hermes-agent.nousresearch.com/docs/user-guide/security) | Command approval, DM pairing, container isolation |
-| [Tools & Toolsets](https://hermes-agent.nousresearch.com/docs/user-guide/features/tools) | 40+ tools, toolset system, terminal backends |
-| [Skills System](https://hermes-agent.nousresearch.com/docs/user-guide/features/skills) | Procedural memory, Skills Hub, creating skills |
-| [Memory](https://hermes-agent.nousresearch.com/docs/user-guide/features/memory) | Persistent memory, user profiles, best practices |
-| [MCP Integration](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp) | Connect any MCP server for extended capabilities |
-| [Cron Scheduling](https://hermes-agent.nousresearch.com/docs/user-guide/features/cron) | Scheduled tasks with platform delivery |
-| [Context Files](https://hermes-agent.nousresearch.com/docs/user-guide/features/context-files) | Project context that shapes every conversation |
-| [Architecture](https://hermes-agent.nousresearch.com/docs/developer-guide/architecture) | Project structure, agent loop, key classes |
-| [Contributing](https://hermes-agent.nousresearch.com/docs/developer-guide/contributing) | Development setup, PR process, code style |
-| [CLI Reference](https://hermes-agent.nousresearch.com/docs/reference/cli-commands) | All commands and flags |
-| [Environment Variables](https://hermes-agent.nousresearch.com/docs/reference/environment-variables) | Complete env var reference |
-
----
-
-## Migrating from OpenClaw
-
-If you're coming from OpenClaw, Hermes can automatically import your settings, memories, skills, and API keys.
-
-**During first-time setup:** The setup wizard (`hermes setup`) automatically detects `~/.openclaw` and offers to migrate before configuration begins.
-
-**Anytime after install:**
-
-```bash
-hermes claw migrate              # Interactive migration (full preset)
-hermes claw migrate --dry-run    # Preview what would be migrated
-hermes claw migrate --preset user-data   # Migrate without secrets
-hermes claw migrate --overwrite  # Overwrite existing conflicts
-```
-
-What gets imported:
-- **SOUL.md** — persona file
-- **Memories** — MEMORY.md and USER.md entries
-- **Skills** — user-created skills → `~/.hermes/skills/openclaw-imports/`
-- **Command allowlist** — approval patterns
-- **Messaging settings** — platform configs, allowed users, working directory
-- **API keys** — allowlisted secrets (Telegram, OpenRouter, OpenAI, Anthropic, ElevenLabs)
-- **TTS assets** — workspace audio files
-- **Workspace instructions** — AGENTS.md (with `--workspace-target`)
-
-See `hermes claw migrate --help` for all options, or use the `openclaw-migration` skill for an interactive agent-guided migration with dry-run previews.
+4.  **Save the Task**: Click "OK" and enter your Windows password if prompted. The task will now run automatically on user logon.
 
 ---
 
-## Contributing
+## ✅ Verification & Monitoring
 
-We welcome contributions! See the [Contributing Guide](https://hermes-agent.nousresearch.com/docs/developer-guide/contributing) for development setup, code style, and PR process.
+Once Hermes and the external monitor are set up on your machine:
 
-Quick start for contributors — clone and go with `setup-hermes.sh`:
+1.  **Start Hermes**: `hermes chat`
+2.  **Observe Startup Messages**: You should see messages indicating `🛡️ Rate limit protection: ACTIVE`, `📊 Model Rater: ACTIVE`, and `🤖 Autonomous Improvement: ACTIVE`.
+3.  **Check External Monitor Log (macOS)**: `cat ~/.hermes/logs/rate_limit_monitor.log`
+4.  **Check External Monitor Status (macOS)**: `launchctl list | grep hermes` (you should see `com.hermes.ratelimitmonitor`)
+5.  **Check External Monitor Status (Windows)**: Open Task Scheduler, navigate to "Task Scheduler Library", and find "Hermes Rate Limit Monitor". Check its "Last Run Result".
+6.  **Monitor `config.yaml`**: The `fallback_providers` list in `~/.hermes/config.yaml` will be automatically updated by the `auto_improve.py` system based on model performance and discovery.
+7.  **Check `~/.hermes/logs/hermes.log`**: For detailed activity of all autonomous systems.
 
-```bash
-git clone https://github.com/NousResearch/hermes-agent.git
-cd hermes-agent
-./setup-hermes.sh     # installs uv, creates venv, installs .[all], symlinks ~/.local/bin/hermes
-./hermes              # auto-detects the venv, no need to `source` first
-```
-
-Manual path (equivalent to the above):
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-uv venv .venv --python 3.11
-source .venv/bin/activate
-uv pip install -e ".[all,dev]"
-scripts/run_tests.sh
-```
-
----
-
-## Community
-
-- 💬 [Discord](https://discord.gg/NousResearch)
-- 📚 [Skills Hub](https://agentskills.io)
-- 🐛 [Issues](https://github.com/NousResearch/hermes-agent/issues)
-- 🔌 [computer-use-linux](https://github.com/avifenesh/computer-use-linux) — Linux desktop-control MCP server for Hermes and other MCP hosts, with AT-SPI accessibility trees, Wayland/X11 input, screenshots, and compositor window targeting.
-- 🔌 [HermesClaw](https://github.com/AaronWong1999/hermesclaw) — Community WeChat bridge: Run Hermes Agent and OpenClaw on the same WeChat account.
-
----
-
-## License
-
-MIT — see [LICENSE](LICENSE).
-
-Built by [Nous Research](https://nousresearch.com).
+This complete setup ensures your Hermes Agent is not only powerful but also self-aware and self-optimizing across different operating systems.
