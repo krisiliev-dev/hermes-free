@@ -1,4 +1,3 @@
-
 """
 Agent initialization module.
 
@@ -29,7 +28,7 @@ from agent.model_metadata import (
     MINIMUM_CONTEXT_LENGTH,
     fetch_model_metadata,
     is_local_endpoint,
-    query_ollama_num_ctx
+    query_ollama_num_ctx,
 )
 from agent.process_bootstrap import _install_safe_stdio
 from agent.subdirectory_hints import SubdirectoryHintTracker
@@ -45,14 +44,21 @@ from hermes_constants import get_hermes_home
 from utils import base_url_host_matches
 
 # Import our new autonomous systems
-from agent.rate_limit_wrapper import initialize_rate_limit_protection, get_rate_limit_interceptor
+from agent.rate_limit_wrapper import (
+    initialize_rate_limit_protection,
+    get_rate_limit_interceptor,
+)
 from agent.model_rater import initialize_model_rater, get_model_rater
-from agent.auto_improve import start_autonomous_improvement, get_system_status as get_auto_improve_status
+from agent.auto_improve import (
+    start_autonomous_improvement,
+    get_system_status as get_auto_improve_status,
+)
 
 # Global instances (initialized in init_agent)
 _rate_limit_interceptor_instance: Optional[Any] = None
 _model_rater_instance: Optional[Any] = None
 _auto_improve_system_started: bool = False
+
 
 def _ra():
     """Lazy reference to ``run_agent`` so callers can patch
@@ -60,6 +66,7 @@ def _ra():
     patches reach this code path.
     """
     _ra()
+
 
 def _normalized_custom_base_url(value: Any) -> str:
     if not isinstance(value, str):
@@ -88,7 +95,11 @@ def _custom_provider_model_matches(agent_model: str, entry: Dict[Any, Any]) -> b
     if agent_model == model:
         return True
     # Handle special cases for model aliases
-    if provider == "openai" and model.startswith("gpt-3.5-turbo") and "-turbo" in agent_model:
+    if (
+        provider == "openai"
+        and model.startswith("gpt-3.5-turbo")
+        and "-turbo" in agent_model
+    ):
         return True
     if provider == "openai" and model.startswith("gpt-4") and "-4" in agent_model:
         return True
@@ -156,9 +167,15 @@ def init_agent(
     from agent.memory_manager import StreamingContextScrubber
 
     # Import our autonomous systems tools
-    from agent.rate_limit_wrapper import initialize_rate_limit_protection, get_rate_limit_interceptor
+    from agent.rate_limit_wrapper import (
+        initialize_rate_limit_protection,
+        get_rate_limit_interceptor,
+    )
     from agent.model_rater import initialize_model_rater
-    from agent.auto_improve import start_autonomous_improvement, get_system_status as get_auto_improve_status
+    from agent.auto_improve import (
+        start_autonomous_improvement,
+        get_system_status as get_auto_improve_status,
+    )
 
     # Initialize core systems
     _install_safe_stdio()
@@ -190,7 +207,8 @@ def init_agent(
         agent._model_rater_enabled = False
         _model_rater_instance = None
 
-    # —  —  — Apply Wrappers to agent.call_llm —  —  — original_llm_call = getattr(agent, 'call_llm', None)
+    # —  —  — Apply Wrappers to agent.call_llm —  —  —
+    original_llm_call = getattr(agent, "call_llm", None)
 
     if _model_rater_instance and original_llm_call:
         agent.call_llm = _model_rater_instance.intercept(original_llm_call)
@@ -212,7 +230,7 @@ def init_agent(
         if not agent.quiet_mode:
             print("🤖 Autonomous Improvement: ACTIVE")
             status = get_auto_improve_status()
-            print(f"   📊 Monitoring: {status.get("threads_active", 0)} threads active")
+            print(f"   📊 Monitoring: {status.get('threads_active', 0)} threads active")
     else:
         if not agent.quiet_mode:
             print("⚠️  Autonomous Improvement: FAILED TO START or ALREADY RUNNING")
