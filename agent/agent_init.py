@@ -166,7 +166,8 @@ def init_agent(
     # Global instances that persist across calls
     global _rate_limit_interceptor_instance, _model_rater_instance, _auto_improve_system_started
 
-    # —  —  — Rate Limit Protection —  —  — try:
+    # —  —  — Rate Limit Protection —  —  —
+    try:
         _rate_limit_interceptor_instance = initialize_rate_limit_protection()
         agent._rate_limit_protection_enabled = True
         if not agent.quiet_mode:
@@ -177,7 +178,8 @@ def init_agent(
         agent._rate_limit_protection_enabled = False
         _rate_limit_interceptor_instance = None
 
-    # —  —  — Model Rater —  —  — try:
+    # —  —  — Model Rater —  —  —
+    try:
         _model_rater_instance = initialize_model_rater()
         agent._model_rater_enabled = True
         if not agent.quiet_mode:
@@ -204,69 +206,15 @@ def init_agent(
     elif _rate_limit_interceptor_instance and not original_llm_call:
         pass
 
-    # —  —  — Autonomous Improvement System —  —  — if start_autonomous_improvement():
+    # —  —  — Autonomous Improvement System —  —  —
+    if start_autonomous_improvement():
         _auto_improve_system_started = True
         if not agent.quiet_mode:
             print("🤖 Autonomous Improvement: ACTIVE")
             status = get_auto_improve_status()
-            print(f"   📊 Monitoring: {status.get('threads_active', 0)} threads active")
+            print(f"   📊 Monitoring: {status.get("threads_active", 0)} threads active")
     else:
         if not agent.quiet_mode:
             print("⚠️  Autonomous Improvement: FAILED TO START or ALREADY RUNNING")
-
-    # Snapshot primary runtime (for potential later use)
-    agent._primary_runtime = {
-        "model": agent.model,
-        "provider": agent.provider,
-        "base_url": agent.base_url,
-        "api_key": agent.api_key,
-        "api_mode": agent.api_mode,
-        "reasoning_config": agent.reasoning_config,
-        "prefill_messages": agent.prefill_messages,
-        "session_id": agent.session_id,
-        "tool_progress_callback": agent.tool_progress_callback,
-        "clarify_callback": agent.clarify_callback,
-        "max_tokens": agent.max_tokens,
-        "_start_time": agent._start_time,
-        "_last_activity_ts": agent._last_activity_ts,
-        "_is_conversation_starter": agent._is_conversation_starter,
-        "_is_first_turn": agent._is_first_turn,
-        "_turn_count": agent._turn_count,
-        "_error_count": agent._error_count,
-        "_warning_count": agent._warning_count,
-        "_skip_reasoning": agent._skip_reasoning,
-        "_throttle_until": agent._throttle_until,
-        "_is_ready": agent._is_ready,
-        "_is_shutting_down": agent._is_shutting_down,
-        "_should_exit": agent._should_exit,
-        "_exit_code": agent._exit_code,
-        "_exit_message": agent._exit_message,
-        "_restart_requested": agent._restart_requested,
-        "_pause_requested": agent._pause_requested,
-        "_resume_requested": agent._resume_requested,
-        "_update_requested": agent._update_requested,
-        "_log_level": agent._log_level,
-        "_log_file": agent._log_file,
-        "_log_rotation_size": agent._log_rotation_size,
-        "_log_rotation_count": agent._log_rotation_count,
-    }
-
-    # Set agent attributes from parameters
-    agent.model = model
-    agent.provider = provider
-    agent.base_url = base_url
-    agent.api_key = api_key
-    agent.api_mode = api_mode
-    agent.reasoning_config = reasoning_config or {}
-    agent.prefill_messages = prefill_messages or []
-    agent.session_id = session_id
-    agent.tool_progress_callback = tool_progress_callback
-    agent.clarify_callback = clarify_callback
-    agent.max_tokens = max_tokens
-    agent.acp_command = acp_command
-    agent.acp_args = acp_args
-    agent.platform = platform
-    agent.skip_context_files = skip_context_files
-    agent.load_soul_identity = load_soul_identity
 
     return agent
