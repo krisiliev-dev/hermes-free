@@ -19,18 +19,23 @@ import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-# Add repository root to FRONT of path for imports to work regardless of execution context
-# This ensures OUR hermes_tools.py is used instead of any system-installed version
+# Add repository root and hermes_cli to FRONT of path for imports
+# This ensures our modules are found regardless of execution context
 current_dir = os.path.dirname(os.path.abspath(__file__))
 repo_root = os.path.dirname(current_dir)  # hermes-agent directory
 if repo_root in sys.path:
-    sys.path.remove(repo_root)  # Remove any existing entry
-sys.path.insert(0, repo_root)  # Insert at front to override others
+    sys.path.remove(repo_root)
+sys.path.insert(0, repo_root)
+
+# Add hermes_cli directory (it's inside hermes-agent/)
+hermes_cli_path = os.path.join(repo_root, 'hermes_cli')
+if hermes_cli_path not in sys.path:
+    sys.path.insert(0, hermes_cli_path)
 
 # Hermes specific imports (assuming these are available in the agent's environment)
 # The agent will implicitly have access to these when run within Hermes
 from hermes_tools import web_search, read_file, write_file, patch, skill_manage
-from hermes_cli.config import cfg_get, cfg_set
+from hermes_cli.config import cfg_get, set_config_value
 from agent.rate_limit_wrapper import get_rate_limit_interceptor, CooldownInfo
 from agent.model_rater import get_model_rater, ModelRating # Assuming model_rater is also in agent/
 
@@ -153,7 +158,7 @@ class AutoImprovementSystem:
             # Compare and update config if changed
             if final_fallback_list != current_fallback_config:
                 logger.info(f"Updating 'fallback_providers' in config.yaml based on model performance.")
-                cfg_set("fallback_providers", final_fallback_list)
+                set_config_value("fallback_providers", final_fallback_list)
                 logger.info(f"Fallback providers updated to: {final_fallback_list}")
             else:
                 logger.debug("Fallback providers are already optimized.")
@@ -215,7 +220,7 @@ class AutoImprovementSystem:
             # Add new models to the beginning of the fallback chain for testing
             # This allows them to be rated and then re-sorted by the improvement check
             updated_fallback_config = fresh_models + current_fallback_config
-            cfg_set("fallback_providers", updated_fallback_config)
+            set_config_value("fallback_providers", updated_fallback_config)
             logger.info(f"Fallback providers updated with new models: {fresh_models}")
         else:
             logger.info("No new free models discovered or integrated.")
@@ -259,7 +264,7 @@ def get_system_status() -> Dict[str, Any]:
 if __name__ == "__main__":
     # Example usage for testing
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-    # Mock cfg_get, cfg_set, web_search, get_model_rater, get_rate_limit_interceptor
+    # Mock cfg_get, set_config_value, web_search, get_model_rater, get_rate_limit_interceptor
     # In a real Hermes environment, these would be available.
     
     # Simple mock for testing outside Hermes
