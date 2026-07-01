@@ -49,7 +49,7 @@ import tempfile
 import threading
 import uuid
 from pathlib import Path
-from typing import Callable, Dict, Any, Optional
+from typing import Callable, Dict, Any, Optional, List
 from urllib.parse import urljoin
 
 from hermes_constants import display_hermes_home
@@ -210,6 +210,7 @@ DEFAULT_OUTPUT_DIR = _get_default_output_dir()
 # ---------------------------------------------------------------------------
 PROVIDER_MAX_TEXT_LENGTH: Dict[str, int] = {
     "edge": 5000,         # edge-tts practical sync limit
+    "deepgram": 5000,     # Deepgram Aura TTS practical sync limit
     "openai": 4096,       # https://platform.openai.com/docs/guides/text-to-speech
     "xai": 15000,         # https://docs.x.ai/developers/model-capabilities/audio/text-to-speech
     "minimax": 10000,     # https://platform.minimax.io/docs/api-reference/speech-t2a-http (sync)
@@ -356,6 +357,7 @@ def _get_provider(tts_config: Dict[str, Any]) -> str:
 # interpreted as a reference to ``tts.providers.<name>``.
 BUILTIN_TTS_PROVIDERS = frozenset({
     "edge",
+    "deepgram",
     "elevenlabs",
     "openai",
     "minimax",
@@ -975,7 +977,54 @@ def _generate_elevenlabs(text: str, output_path: str, tts_config: Dict[str, Any]
 
 
 # ===========================================================================
-# Provider: OpenAI TTS
+# Provider: Deepgram
+# ===========================================================================
+def _resolve_deepgram_api_key() -> str:
+    return (get_env_value("DEEPGRAM_API_KEY") or "").strip()
+
+
+def _generate_deepgram(text: str, output_path: str, tts_config: Dict[str, Any]) -> str:
+    import requests
+    api_key = _resolve_deepgram_api_key()
+    if not api_key:
+        raise ValueError("DEEPGRAM_API_KEY not set for Deepgram TTS")
+
+    tts_base = str(get_env_value("DEEPGRAM_TTS_BASE_URL", "https://api.deepgram.com/v1") or "https://api.deepgram.com/v1")
+    voice = str(tts_config.get("deepgram", {}).get("voice") or "")
+    model = str(tts_config.get("deepgram", {}).get("model") or "")
+
+    if not voice:
+        voice = tts_config.get("deepgram", {}).get("voice_id", "") or "aura-asteria-en"
+    if not model:
+        model = str(tts_config.get("deepgram", {}).get("model_id") or "")
+
+    # Deepgram Aura uses the voice model as a query parameter:
+    # POST /v1/speak?model=aura-asteria-en with JSON {"text": ...}.
+    selected_model = model or voice or "aura-asteria-en"
+    url = f"{tts_base.rstrip('/')}/speak?model={selected_model}"
+    payload: Dict[str, Any] = {"text": text}
+
+    with requests.post(
+        url,
+        headers={
+            "Authorization": f"Token {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "audio/mpeg",
+        },
+        json=payload,
+        stream=True,
+        timeout=60,
+    ) as response:
+        response.raise_for_status()
+        with open(output_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=65536):
+                if chunk:
+                    f.write(chunk)
+        return output_path
+
+
+# ===========================================================================
+# Legacy provider: OpenAI TTS
 # ===========================================================================
 def _generate_openai_tts(text: str, output_path: str, tts_config: Dict[str, Any]) -> str:
     """
@@ -1931,6 +1980,75 @@ def text_to_speech_tool(
     file_path.parent.mkdir(parents=True, exist_ok=True)
     file_str = str(file_path)
 
+    def _fallback_provider_names() -> List[str]:
+        raw = tts_config.get("fallback_providers") or tts_config.get("fallback") or []
+        if isinstance(raw, str):
+            stripped = raw.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                raw = [part.strip().strip("'\"") for part in stripped[1:-1].split(",")]
+            else:
+                raw = [stripped]
+        if not isinstance(raw, list):
+            return []
+        names: List[str] = []
+        for item in raw:
+            name = ""
+            if isinstance(item, str):
+                name = item
+            elif isinstance(item, dict):
+                name = str(item.get("provider") or item.get("name") or "")
+            name = name.lower().strip()
+            if name and name != provider and name not in names:
+                names.append(name)
+        return names
+
+    def _fallback_success_payload(active_provider: str, active_file: str, reason: str) -> str:
+        file_size = os.path.getsize(active_file)
+        logger.info(
+            "TTS fallback saved: %s (%s bytes, provider: %s, reason: %s)",
+            active_file, f"{file_size:,}", active_provider, reason,
+        )
+        return json.dumps({
+            "success": True,
+            "file_path": active_file,
+            "media_tag": f"MEDIA:{active_file}",
+            "provider": active_provider,
+            "fallback_from": provider,
+            "voice_compatible": False,
+        }, ensure_ascii=False)
+
+    def _try_fallback_tts(reason: str) -> Optional[str]:
+        for fallback_provider in _fallback_provider_names():
+            suffix = Path(file_str).suffix or ".mp3"
+            fallback_path = str(Path(file_str).with_name(f"{Path(file_str).stem}_{fallback_provider}{suffix}"))
+            try:
+                if fallback_provider == "deepgram":
+                    _generate_deepgram(text, fallback_path, tts_config)
+                elif fallback_provider == "elevenlabs":
+                    _import_elevenlabs()
+                    _generate_elevenlabs(text, fallback_path, tts_config)
+                elif fallback_provider == "edge":
+                    _import_edge_tts()
+                    try:
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                            pool.submit(
+                                lambda: asyncio.run(_generate_edge_tts(text, fallback_path, tts_config))
+                            ).result(timeout=60)
+                    except RuntimeError:
+                        asyncio.run(_generate_edge_tts(text, fallback_path, tts_config))
+                else:
+                    logger.debug("Skipping unsupported TTS fallback provider: %s", fallback_provider)
+                    continue
+                if os.path.exists(fallback_path) and os.path.getsize(fallback_path) > 0:
+                    return _fallback_success_payload(fallback_provider, fallback_path, reason)
+            except Exception as fallback_error:
+                logger.warning(
+                    "TTS fallback provider %s failed after %s error: %s",
+                    fallback_provider, provider, fallback_error,
+                )
+        return None
+
     try:
         # Generate audio with the configured provider
         if command_provider_config is not None:
@@ -1966,6 +2084,10 @@ def text_to_speech_tool(
                 }, ensure_ascii=False)
             logger.info("Generating speech with ElevenLabs...")
             _generate_elevenlabs(text, file_str, tts_config)
+
+        elif provider == "deepgram":
+            logger.info("Generating speech with Deepgram Aura TTS...")
+            _generate_deepgram(text, file_str, tts_config)
 
         elif provider == "openai":
             try:
@@ -2133,16 +2255,25 @@ def text_to_speech_tool(
         # Configuration errors (missing API keys, etc.)
         error_msg = f"TTS configuration error ({provider}): {e}"
         logger.error("%s", error_msg)
+        fallback = _try_fallback_tts(error_msg)
+        if fallback:
+            return fallback
         return tool_error(error_msg, success=False)
     except FileNotFoundError as e:
         # Missing dependencies or files
         error_msg = f"TTS dependency missing ({provider}): {e}"
         logger.error("%s", error_msg, exc_info=True)
+        fallback = _try_fallback_tts(error_msg)
+        if fallback:
+            return fallback
         return tool_error(error_msg, success=False)
     except Exception as e:
         # Unexpected errors
         error_msg = f"TTS generation failed ({provider}): {e}"
         logger.error("%s", error_msg, exc_info=True)
+        fallback = _try_fallback_tts(error_msg)
+        if fallback:
+            return fallback
         return tool_error(error_msg, success=False)
 
 

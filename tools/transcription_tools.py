@@ -26,12 +26,14 @@ Usage::
         print(result["transcript"])
 """
 
+import json
 import logging
 import os
 import shlex
 import shutil
 import subprocess
 import tempfile
+import urllib.request
 from pathlib import Path
 from typing import Optional, Dict, Any
 from urllib.parse import urljoin
@@ -95,6 +97,8 @@ COMMON_LOCAL_BIN_DIRS = ("/opt/homebrew/bin", "/usr/local/bin")
 GROQ_BASE_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
 OPENAI_BASE_URL = os.getenv("STT_OPENAI_BASE_URL", "https://api.openai.com/v1")
 XAI_STT_BASE_URL = os.getenv("XAI_STT_BASE_URL", "https://api.x.ai/v1")
+DEEPGRAM_STT_BASE_URL = os.getenv("DEEPGRAM_STT_BASE_URL", "https://api.deepgram.com/v1")
+DEEPGRAM_STT_MODEL = os.getenv("DEEPGRAM_STT_MODEL", "nova-3")
 
 SUPPORTED_FORMATS = {".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm", ".ogg", ".aac", ".flac"}
 LOCAL_NATIVE_AUDIO_FORMATS = {".wav", ".aiff", ".aif"}
@@ -234,6 +238,7 @@ BUILTIN_STT_PROVIDERS = frozenset({
     "openai",
     "mistral",
     "xai",
+    "deepgram",
 })
 
 
@@ -810,6 +815,14 @@ def _get_provider(stt_config: dict) -> str:
             )
             return "none"
 
+        if provider == "deepgram":
+            if get_env_value("DEEPGRAM_API_KEY"):
+                return "deepgram"
+            logger.warning(
+                "STT provider 'deepgram' configured but DEEPGRAM_API_KEY not set"
+            )
+            return "none"
+
         return provider  # Unknown — let it fail downstream
 
     # --- Auto-detect (no explicit provider): local > groq > openai > mistral > xai ---
@@ -841,6 +854,10 @@ def _get_provider(stt_config: dict) -> str:
             return "xai"
     except Exception:
         pass
+    deepgram_key = get_env_value("DEEPGRAM_API_KEY")
+    if deepgram_key:
+        logger.info("No local/xAI STT available, using Deepgram Nova-3")
+        return "deepgram"
     return "none"
 
 
@@ -1506,6 +1523,57 @@ def _transcribe_xai(file_path: str, model_name: str) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Provider: Deepgram (Nova-3 API)
+# ---------------------------------------------------------------------------
+
+
+def _transcribe_deepgram(file_path: str, model_name: str) -> Dict[str, Any]:
+    """Transcribe using Deepgram Nova-3 via the REST listen endpoint."""
+    api_key = get_env_value("DEEPGRAM_API_KEY")
+    if not api_key:
+        return {"success": False, "transcript": "", "error": "DEEPGRAM_API_KEY not set"}
+
+    base_url = (os.getenv("DEEPGRAM_STT_BASE_URL", "") or "https://api.deepgram.com/v1").rstrip("/")
+    url = f"{base_url}/listen?model={model_name}&smart_format=true"
+    try:
+        with open(file_path, "rb") as audio_file:
+            data = audio_file.read()
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={
+                "Authorization": f"Token {api_key}",
+                "Content-Type": "audio/wav",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+        try:
+            parsed = json.loads(body)
+            transcript_text = (
+                (((parsed or {}).get("results") or {}).get("channels") or [{}])[0]
+                .get("alternatives", [{}])[0]
+                .get("transcript", "")
+            )
+        except Exception:
+            transcript_text = ""
+        transcript_text = (transcript_text or "").strip()
+        if not transcript_text:
+            return {"success": False, "transcript": "", "error": "empty transcript"}
+        logger.info(
+            "Transcribed %s via Deepgram /listen (%s, %d chars)",
+            Path(file_path).name,
+            model_name,
+            len(transcript_text),
+        )
+        return {"success": True, "transcript": transcript_text, "provider": "deepgram"}
+    except Exception as e:
+        logger.warning("Deepgram transcription failed: %s", e, exc_info=True)
+        return {"success": False, "transcript": "", "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -1577,6 +1645,11 @@ def transcribe_audio(file_path: str, model: Optional[str] = None) -> Dict[str, A
         # xAI Grok STT doesn't use a model parameter — pass through for logging
         model_name = model or "grok-stt"
         return _transcribe_xai(file_path, model_name)
+
+    if provider == "deepgram":
+        deepgram_cfg = stt_config.get("deepgram", {})
+        model_name = model or deepgram_cfg.get("model", DEEPGRAM_STT_MODEL)
+        return _transcribe_deepgram(file_path, model_name)
 
     # User-declared command-type provider
     # (``stt.providers.<name>: type: command``). Fires after the built-in

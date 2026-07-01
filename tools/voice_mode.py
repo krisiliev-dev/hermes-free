@@ -24,6 +24,21 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+
+DEFAULT_MIN_UTTERANCE_SECONDS = 0.18
+
+def get_min_utterance_seconds() -> float:
+    """Return Discord voice-channel minimum utterance duration, clamped for latency.
+
+    This is intentionally tiny for natural turn-taking; sub-180ms clips are
+    usually clicks/noise, but users can tune HERMES_VC_MIN_UTTERANCE_SECONDS.
+    """
+    try:
+        value = float(os.getenv("HERMES_VC_MIN_UTTERANCE_SECONDS", str(DEFAULT_MIN_UTTERANCE_SECONDS)))
+    except Exception:
+        value = DEFAULT_MIN_UTTERANCE_SECONDS
+    return max(0.10, min(1.0, value))
+
 # ---------------------------------------------------------------------------
 # Lazy audio imports -- never imported at module level to avoid crashing
 # in headless environments (SSH, Docker, WSL, no PortAudio).

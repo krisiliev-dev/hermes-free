@@ -61,16 +61,18 @@ logger = logging.getLogger(__name__)
 # Configuration for MoA processing
 # Reference models - these generate diverse initial responses in parallel.
 # Keep this list aligned with current top-tier OpenRouter frontier options.
+# Repointed to FREE OpenRouter models (Kristiyan's "free forever" goal). These
+# are diverse, tool-capable, ≥64K-context frontier-class open models. Note:
+# OpenRouter's free tier shares a daily cap, so MoA is for occasional hard
+# problems, not every turn. (Reverts on `hermes update` — re-apply if so.)
 REFERENCE_MODELS = [
-    "anthropic/claude-opus-4.6",
-    "google/gemini-2.5-pro",
-    "openai/gpt-5.4-pro",
-    "deepseek/deepseek-v3.2",
+    "openai/gpt-oss-120b:free",
+    "moonshotai/kimi-k2.6:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
 ]
 
 # Aggregator model - synthesizes reference responses into final output.
-# Prefer the strongest synthesis model in the current OpenRouter lineup.
-AGGREGATOR_MODEL = "anthropic/claude-opus-4.6"
+AGGREGATOR_MODEL = "openai/gpt-oss-120b:free"
 
 # Temperature settings optimized for MoA performance
 REFERENCE_TEMPERATURE = 0.6  # Balanced creativity for diverse perspectives

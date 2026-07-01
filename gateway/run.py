@@ -11566,6 +11566,30 @@ class GatewayRunner:
         voice_channel = await adapter.get_user_voice_channel(
             guild_id, event.source.user_id
         )
+        fallback_voice_channel = False
+        if not voice_channel:
+            fallback_channel_id = None
+            try:
+                discord_cfg = self.config.platforms.get(Platform.DISCORD)
+                extra = getattr(discord_cfg, "extra", {}) if discord_cfg else {}
+                if isinstance(extra, dict):
+                    fallback_channel_id = extra.get("voice_join_fallback_channel_id")
+            except Exception:
+                fallback_channel_id = None
+            fallback_channel_id = fallback_channel_id or os.getenv("DISCORD_VOICE_JOIN_FALLBACK_CHANNEL_ID")
+            discord_client = getattr(adapter, "_client", None)
+            if fallback_channel_id and discord_client:
+                try:
+                    channel_id_int = int(str(fallback_channel_id).strip())
+                    voice_channel = discord_client.get_channel(channel_id_int)
+                    if voice_channel is None:
+                        voice_channel = await discord_client.fetch_channel(channel_id_int)
+                    if getattr(getattr(voice_channel, "guild", None), "id", None) != guild_id:
+                        voice_channel = None
+                    fallback_voice_channel = voice_channel is not None
+                except Exception as e:
+                    logger.warning("Failed to resolve Discord voice fallback channel %s: %s", fallback_channel_id, e)
+                    voice_channel = None
         if not voice_channel:
             return "You need to be in a voice channel first."
 
@@ -11575,6 +11599,28 @@ class GatewayRunner:
             adapter._voice_input_callback = self._handle_voice_channel_input
         if hasattr(adapter, "_on_voice_disconnect"):
             adapter._on_voice_disconnect = self._handle_voice_timeout_cleanup
+
+        from plugins.platforms.discord.discord_voice_mode_wrapper import (
+            maybe_start_pipecat_orchestrator,
+        )
+
+        async def _voice_reply(transcript: str) -> str:
+            synthetic = MessageEvent(
+                source=event.source,
+                text=transcript,
+                message_type=MessageType.VOICE,
+                raw_message=type("S", (), {"guild_id": guild_id})(),
+            )
+            if adapter:
+                await adapter.handle_message(synthetic)
+            return ""
+
+        try:
+            await maybe_start_pipecat_orchestrator(
+                adapter, guild_id, reply_fn=_voice_reply,
+            )
+        except Exception:
+            pass
 
         try:
             success = await adapter.join_voice_channel(voice_channel)
@@ -11596,11 +11642,14 @@ class GatewayRunner:
             self._voice_mode[self._voice_key(event.source.platform, event.source.chat_id)] = "all"
             self._save_voice_modes()
             self._set_adapter_auto_tts_enabled(adapter, event.source.chat_id, enabled=True)
-            return (
+            joined_msg = (
                 f"Joined voice channel **{voice_channel.name}**.\n"
                 f"I'll speak my replies and listen to you. Use /voice leave to disconnect."
             )
-        # Join failed — clear callback
+            if fallback_voice_channel:
+                joined_msg += "\n(Used the configured fallback voice channel because you weren't in a VC.)"
+            return joined_msg
+
         adapter._voice_input_callback = None
         return "Failed to join voice channel. Check bot permissions (Connect + Speak)."
 
@@ -11614,6 +11663,15 @@ class GatewayRunner:
 
         if not hasattr(adapter, "is_in_voice_channel") or not adapter.is_in_voice_channel(guild_id):
             return "Not in a voice channel."
+
+        from plugins.platforms.discord.discord_voice_mode_wrapper import (
+            maybe_stop_pipecat_orchestrator,
+        )
+
+        try:
+            await maybe_stop_pipecat_orchestrator(guild_id)
+        except Exception:
+            pass
 
         try:
             await adapter.leave_voice_channel(guild_id)
@@ -11733,18 +11791,34 @@ class GatewayRunner:
         except Exception:
             pass
 
-        # Build a synthetic MessageEvent and feed through the normal pipeline
-        # Use SimpleNamespace as raw_message so _get_guild_id() can extract
-        # guild_id and _send_voice_reply() plays audio in the voice channel.
-        from types import SimpleNamespace
-        event = MessageEvent(
-            source=source,
-            text=transcript,
-            message_type=MessageType.VOICE,
-            raw_message=SimpleNamespace(guild_id=guild_id, guild=None),
-        )
+        # Pause receiver while processing so the bot doesn't hear itself or
+        # start a new capture cycle before the reply is queued.
+        receiver = adapter._voice_receivers.get(guild_id)
+        if receiver:
+            try:
+                receiver.pause()
+            except Exception:
+                pass
 
-        await adapter.handle_message(event)
+        try:
+            # Build a synthetic MessageEvent and feed through the normal pipeline
+            # Use SimpleNamespace as raw_message so _get_guild_id() can extract
+            # guild_id and _send_voice_reply() plays audio in the voice channel.
+            from types import SimpleNamespace
+            event = MessageEvent(
+                source=source,
+                text=transcript,
+                message_type=MessageType.VOICE,
+                raw_message=SimpleNamespace(guild_id=guild_id, guild=None),
+            )
+
+            await adapter.handle_message(event)
+        finally:
+            if receiver:
+                try:
+                    receiver.resume()
+                except Exception:
+                    pass
 
     def _should_send_voice_reply(
         self,
@@ -11800,6 +11874,46 @@ class GatewayRunner:
 
         return True
 
+    @staticmethod
+    def _voice_persona_rewrite(text: str) -> str:
+        """Light cleanup for voice replies: shorter, remove tool-call framing."""
+        if not isinstance(text, str) or not text.strip():
+            return ""
+
+        # Remove common tool-call patterns that leak into voice output
+        tts_text = re.sub(
+            r'```[\s\S]*?```', '', text
+        ).strip()
+        tts_text = re.sub(
+            r'`[^`]*`', '', tts_text
+        ).strip()
+
+        # Strip leading reasoning/intro phrases the model often emits
+        tts_text = re.sub(
+            r'^(Okay,?\s*)?(Sure,?\s*)?(Here\'?s\s+)?(I\'ll\s+)?(Let me\s+)?(As an AI,?\s*)?',
+            '', tts_text, flags=re.IGNORECASE
+        ).strip()
+
+        # Remove trailing disclaimers / tool-call markers
+        tts_text = re.sub(
+            r'\s*\(Note:.*$', '', tts_text, flags=re.IGNORECASE
+        ).strip()
+        tts_text = re.sub(
+            r'\s*\[tool:.*?\]', '', tts_text, flags=re.IGNORECASE
+        ).strip()
+
+        # Hard cap voice output to 2 short sentences for natural conversation
+        sentences = re.split(r'(?<=[.!?])\s', tts_text)
+        if len(sentences) > 2:
+            tts_text = ' '.join(sentences[:2])
+
+        # Final length cap for voice
+        tts_text = tts_text[:300].strip()
+        # Remove trailing partial sentence
+        tts_text = re.sub(r'\s*[,;:]\s*$', '', tts_text).strip()
+
+        return tts_text or text[:300]
+
     async def _send_voice_reply(self, event: MessageEvent, text: str) -> None:
         """Generate TTS audio and send as a voice message before the text reply."""
         import uuid as _uuid
@@ -11811,6 +11925,11 @@ class GatewayRunner:
             tts_text = _strip_markdown_for_tts(text[:4000])
             if not tts_text:
                 return
+
+            # For voice replies, keep it more human and shorter.
+            voice_text = GatewayRunner._voice_persona_rewrite(tts_text)
+            if voice_text:
+                tts_text = voice_text
 
             # Use .mp3 extension so edge-tts conversion to opus works correctly.
             # The TTS tool may convert to .ogg — use file_path from result.
