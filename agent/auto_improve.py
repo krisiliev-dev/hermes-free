@@ -12,10 +12,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import sys
 import threading
 import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
+
+# Add parent directory to path for imports to work regardless of execution context
+# This makes hermes_tools.py importable when running directly vs. as part of a package
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
 
 # Hermes specific imports (assuming these are available in the agent's environment)
 # The agent will implicitly have access to these when run within Hermes
